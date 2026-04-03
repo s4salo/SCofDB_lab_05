@@ -1,9 +1,13 @@
-"""Rate limiting middleware template for LAB 05."""
+"""Rate limiting middleware implementation for LAB 05."""
 
 from typing import Callable
+import os
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.infrastructure.redis_client import get_redis
+from app.infrastructure.cache_keys import payment_rate_limit_key
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -37,7 +41,54 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
            - X-RateLimit-Limit
            - X-RateLimit-Remaining
         """
+        is_payment_endpoint = (
+            request.url.path.startswith("/api/orders/") and request.url.path.endswith("/pay")
+        ) or request.url.path.startswith("/api/payments/")
 
-        # Заглушка: ограничение пока не применяется.
-        # TODO: заменить на полноценную реализацию.
-        return await call_next(request)
+        if not is_payment_endpoint:
+            return await call_next(request)
+
+        subject = self._get_subject(request)
+
+        redis_key = payment_rate_limit_key(subject)
+
+        redis_client = get_redis()
+
+        current_count = await redis_client.incr(redis_key)
+
+        if current_count == 1:
+            await redis_client.expire(redis_key, self.window_seconds)
+
+        headers = {
+            "X-RateLimit-Limit": str(self.limit_per_window),
+            "X-RateLimit-Remaining": str(max(0, self.limit_per_window - current_count)),
+            "X-RateLimit-Window": f"{self.window_seconds}s"
+        }
+
+        if current_count > self.limit_per_window:
+            return Response(
+                content='{"error": "Too Many Requests", "message": "Rate limit exceeded"}',
+                status_code=429,
+                headers=headers,
+                media_type="application/json"
+            )
+
+        response = await call_next(request)
+
+        for key, value in headers.items():
+            response.headers[key] = value
+
+        return response
+
+    def _get_subject(self, request: Request) -> str:
+        """
+        Определяет уникальный идентификатор для rate limiting.
+        Приоритет: user_id -> client IP.
+        """
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
+
+        return f"ip:{client_ip}"

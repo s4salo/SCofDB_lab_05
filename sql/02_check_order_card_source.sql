@@ -14,7 +14,7 @@ SELECT
     o.total_amount,
     o.created_at
 FROM orders o
-WHERE o.id = '{{order_id}}'::uuid;
+WHERE o.id = '{{dff9899c-6cdf-405d-9ccf-ded626c1bc5b}}'::uuid;
 
 SELECT
     oi.order_id,
@@ -22,5 +22,5 @@ SELECT
     oi.price,
     oi.quantity
 FROM order_items oi
-WHERE oi.order_id = '{{order_id}}'::uuid
+WHERE oi.order_id = '{{dff9899c-6cdf-405d-9ccf-ded626c1bc5b}}'::uuid
 ORDER BY oi.product_name;
